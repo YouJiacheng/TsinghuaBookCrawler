@@ -1,93 +1,76 @@
 # coding:utf-8
+import asyncio
+import re
 import os
-import sys
-import random
 
-import requests
-from multiprocessing.pool import Pool
-from urllib.parse import urljoin
-from auth_get import auth_get
+import aiohttp
+import aiofiles
 
 
-def randstr(num):
-    H = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-    ret = ''
-    for i in range(num):
-        ret += random.choice(H)
-    return ret
+class VolumeQueue(asyncio.Queue):
+    def __init__(self, maxsize: int) -> None:
+        super().__init__(maxsize=maxsize)
+        self.volumeNotFound: bool = False
 
+async def download_page_async(session: aiohttp.ClientSession, file_dir_url: str, page: int, imgs_path_prefix: str):
+    img_path = f'{imgs_path_prefix}_{page}.jpg'
+    if os.path.exists(img_path): # 已下载，跳过
+        return
+    url = f'{file_dir_url}/{page}.jpg'
+    async with session.get(url=url) as resp:
+        if resp.status == 200:
+            img = await resp.read()
+            async with aiofiles.open(img_path, mode='wb') as f:
+                await f.write(img)
+        else:
+            raise NotImplementedError
 
-def get_tmpname():
-    """
-    返回一个随机的临时名字
-    :return:
-    """
-    return '.tmp' + randstr(16)
+async def download_volume_worker(session: aiohttp.ClientSession, book_id: int, volume_queue: VolumeQueue, imgs_dir: str):
+    while True:
+        volume_id = await volume_queue.get()
+        volume_url = f'http://reserves.lib.tsinghua.edu.cn/book6/{book_id}/{book_id}{volume_id:03}'
 
+        config_url = f'{volume_url}/mobile/javascript/config.js'
+        async with session.get(url=config_url) as resp:
+            if resp.status == 200:
+                config = await resp.text()
+                pages_num = int(re.search(r'bookConfig.totalPageCount=(\d+)', config).group(1))
+                file_dir_url = f'{volume_url}/files/mobile'
+                imgs_path_prefix = os.path.join(imgs_dir, f'{volume_id}')
+                pages_coro = [download_page_async(session, file_dir_url, page, imgs_path_prefix) for page in range(1, pages_num + 1)]
+                await asyncio.gather(*pages_coro)
+                volume_queue.task_done()
+            elif resp.status == 404:
+                volume_queue.volumeNotFound = True
+                volume_queue.task_done()
+            else:
+                raise NotImplementedError
 
-def download_one(session, username, password, url, save_dir, filename):
-    """
-    下载一张图片
-    :param session: Session 类型
-    :param url: 下载的url
-    :param save_dir: 保存的目录
-    :param filename: 文件名
-    :return:
-    """
-    try:
-        save_path = os.path.join(save_dir, filename)
-        try:
-            res = auth_get(url, session, username, password, timeout=15)
-        except requests.exceptions.Timeout:
-            print('请求超时:', filename)
-            return
-        print('开始下载：' + filename)
-        while True:
-            tmp_name = get_tmpname()
-            tmp_path = os.path.join(save_dir, tmp_name)
-            if not os.path.exists(tmp_path):
-                break
-        with open(tmp_path, 'wb') as f:
-            f.write(res.content)
-        os.rename(tmp_path, save_path)
-        print('下载图片成功：' + filename)
-    except KeyboardInterrupt:
-        pid = os.getpid()
-        print('子进程 %d 被终止...' % pid)
-    except Exception as e:
-        print(e)
+async def download_book_async(book_id, imgs_dir):
+    async with aiohttp.ClientSession() as session:
+        volume_queue = VolumeQueue(maxsize=10)
+        workers_num = 5
+        # 创建并运行worker
+        workers = [asyncio.create_task(download_volume_worker(session, book_id, volume_queue, imgs_dir)) for _ in range(workers_num)]
 
+        # volume数量未知，不断加入workload保持队列满直到访问某个volume时404
+        volume_id: int = 0
+        while not volume_queue.volumeNotFound:
+            await volume_queue.put(volume_id)
+            volume_id += 1
 
-def download_imgs(session, username, password, img_urls, page_count, save_dir, processing_num):
-    """
-    下载一本书的所有图片
-    :param session: Session类型
-    :param username: 用户名
-    :param password: 密码
-    :param img_urls: 要下载的所有图片路径
-    :param page_count: 页数
-    :param save_dir: 保存的目录
-    :param processing_num: 进程数
-    :return:
-    """
-    os.makedirs(save_dir, exist_ok=True)
-    fail = True
-    img_fmt = img_urls[0][img_urls[0].rfind('.')+1:]
-    try:
-        while fail:
-            p = Pool(processing_num)
-            fail = False
-            for i, img_url in enumerate(img_urls):
-                filename = '%d.%s' % (i+1, img_fmt)
-                path = os.path.join(save_dir, filename)
-                if os.path.exists(path):
-                    print('已下载：%s, 跳过' % filename)
-                    continue
-                fail = True
-                p.apply_async(download_one, args=(session, username, password, img_url, save_dir, filename))
-            p.close()
-            p.join()
-    except KeyboardInterrupt:
-        print('父进程被终止')
-        pid = os.getpid()
-        os.popen('taskkill.exe /f /pid:%d' % pid)
+        # 等待尚未完成的下载
+        await volume_queue.join()
+
+        # 销毁worker
+        for worker in workers:
+            worker.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
+
+        
+
+def download_book(book_id: str, download_dir):
+    imgs_dir = os.path.join(download_dir, book_id)
+    os.makedirs(imgs_dir, exist_ok=True)
+    asyncio.run(download_book_async(book_id, imgs_dir))
+    return imgs_dir
