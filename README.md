@@ -12,7 +12,7 @@
 
 ### 环境
 
-python 版本为 python3，需要安装 fpdf、requests``pip install fpdf requests``，无需安装PIL(Pillow)
+python 版本为 python3，需要安装 aiohttp、aiofiles和fpdf``pip install aiohttp aiofiles fpdf``，无需安装PIL(Pillow)
 
 也可以使用 requirements.txt 进行一键安装：``pip install -r requirements.txt``。
 
