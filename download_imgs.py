@@ -25,10 +25,10 @@ async def download_page_async(session: aiohttp.ClientSession, file_dir_url: str,
         else:
             raise NotImplementedError
 
-async def download_volume_worker(session: aiohttp.ClientSession, book_id: int, volume_queue: VolumeQueue, imgs_dir: str):
+async def download_volume_worker(session: aiohttp.ClientSession, base_url, book_id: int, volume_queue: VolumeQueue, imgs_dir: str):
     while True:
         volume_id = await volume_queue.get()
-        volume_url = f'http://reserves.lib.tsinghua.edu.cn/book6/{book_id}/{book_id}{volume_id:03}'
+        volume_url = f'{base_url}/{book_id}/{book_id}{volume_id:03}'
 
         config_url = f'{volume_url}/mobile/javascript/config.js'
         async with session.get(url=config_url) as resp:
@@ -46,12 +46,12 @@ async def download_volume_worker(session: aiohttp.ClientSession, book_id: int, v
             else:
                 raise NotImplementedError
 
-async def download_book_async(book_id, imgs_dir):
+async def download_book_async(base_url, book_id, imgs_dir):
     async with aiohttp.ClientSession() as session:
         volume_queue = VolumeQueue(maxsize=10)
         workers_num = 5
         # 创建并运行worker
-        workers = [asyncio.create_task(download_volume_worker(session, book_id, volume_queue, imgs_dir)) for _ in range(workers_num)]
+        workers = [asyncio.create_task(download_volume_worker(session, base_url, book_id, volume_queue, imgs_dir)) for _ in range(workers_num)]
 
         # volume数量未知，不断加入workload保持队列满直到访问某个volume时404
         volume_id: int = 0
@@ -69,8 +69,9 @@ async def download_book_async(book_id, imgs_dir):
 
         
 
-def download_book(book_id: str, download_dir):
+def download_book(book_category: int, book_id: str, download_dir):
     imgs_dir = os.path.join(download_dir, book_id)
     os.makedirs(imgs_dir, exist_ok=True)
-    asyncio.run(download_book_async(book_id, imgs_dir))
+    base_url = f'http://reserves.lib.tsinghua.edu.cn/book{book_category}'
+    asyncio.run(download_book_async(base_url, book_id, imgs_dir))
     return imgs_dir
