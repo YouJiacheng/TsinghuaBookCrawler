@@ -37,7 +37,7 @@ async def download_volume_worker(session: aiohttp.ClientSession, base_url, book_
                 pages_num = int(re.search(r'bookConfig.totalPageCount=(\d+)', config).group(1))
                 file_dir_url = f'{volume_url}/files/mobile'
                 imgs_path_prefix = os.path.join(imgs_dir, f'{volume_id:03}')
-                group_size = 10 # 限制连接数量
+                group_size = 20 # 限制连接数量
                 for group_begin in range(0, pages_num, group_size):
                     group_end = min(pages_num, group_begin + group_size)
                     pages_coro = (download_page_async(session, file_dir_url, page, imgs_path_prefix) for page in range(group_begin, group_end))
