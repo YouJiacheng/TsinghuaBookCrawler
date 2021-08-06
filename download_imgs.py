@@ -13,7 +13,7 @@ class VolumeQueue(asyncio.Queue):
         self.volumeNotFound: bool = False
 
 async def download_page_async(session: aiohttp.ClientSession, file_dir_url: str, page: int, imgs_path_prefix: str):
-    img_path = f'{imgs_path_prefix}_{page}.jpg'
+    img_path = f'{imgs_path_prefix}_{page:05}.jpg'
     if os.path.exists(img_path): # 已下载，跳过
         return
     url = f'{file_dir_url}/{page}.jpg'
@@ -36,7 +36,7 @@ async def download_volume_worker(session: aiohttp.ClientSession, base_url, book_
                 config = await resp.text()
                 pages_num = int(re.search(r'bookConfig.totalPageCount=(\d+)', config).group(1))
                 file_dir_url = f'{volume_url}/files/mobile'
-                imgs_path_prefix = os.path.join(imgs_dir, f'{volume_id}')
+                imgs_path_prefix = os.path.join(imgs_dir, f'{volume_id:03}')
                 pages_coro = [download_page_async(session, file_dir_url, page, imgs_path_prefix) for page in range(1, pages_num + 1)]
                 await asyncio.gather(*pages_coro)
                 volume_queue.task_done()
