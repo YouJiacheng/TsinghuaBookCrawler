@@ -16,7 +16,7 @@ async def download_page_async(session: aiohttp.ClientSession, file_dir_url: str,
     img_path = f'{imgs_path_prefix}_{page:05}.jpg'
     if os.path.exists(img_path): # 已下载，跳过
         return
-    url = f'{file_dir_url}/{page}.jpg'
+    url = f'{file_dir_url}/{page + 1}.jpg'
     async with session.get(url=url) as resp:
         if resp.status == 200:
             img = await resp.read()
@@ -37,8 +37,11 @@ async def download_volume_worker(session: aiohttp.ClientSession, base_url, book_
                 pages_num = int(re.search(r'bookConfig.totalPageCount=(\d+)', config).group(1))
                 file_dir_url = f'{volume_url}/files/mobile'
                 imgs_path_prefix = os.path.join(imgs_dir, f'{volume_id:03}')
-                pages_coro = [download_page_async(session, file_dir_url, page, imgs_path_prefix) for page in range(1, pages_num + 1)]
-                await asyncio.gather(*pages_coro)
+                group_size = 10 # 限制连接数量
+                for group_begin in range(0, pages_num, group_size):
+                    group_end = min(pages_num, group_begin + group_size)
+                    pages_coro = (download_page_async(session, file_dir_url, page, imgs_path_prefix) for page in range(group_begin, group_end))
+                    await asyncio.gather(*pages_coro)
                 volume_queue.task_done()
             elif resp.status == 404:
                 volume_queue.volumeNotFound = True
